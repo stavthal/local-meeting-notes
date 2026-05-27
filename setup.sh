@@ -33,6 +33,12 @@ else
     ok "ollama already installed"
 fi
 
+if ! brew list ffmpeg >/dev/null 2>&1; then
+    brew install ffmpeg
+else
+    ok "ffmpeg already installed"
+fi
+
 if ! brew list pipx >/dev/null 2>&1; then
     brew install pipx
     pipx ensurepath
@@ -91,8 +97,9 @@ Open  Audio MIDI Setup  (⌘-Space → "Audio MIDI Setup")
   while in a meeting.
 
 Then:
-  meet devices                # find the Aggregate Device index
-  meet all --device <N>       # record → transcribe → summarize
+  meet all                    # probe inputs, choose one, record → transcribe → summarize
+  meet devices                # inspect inputs manually
+  meet all --device <N>       # skip the prompt with an input index
 
 If `meet` isn't on PATH yet, open a new terminal (pipx PATH update needs
 a fresh shell) or run:  ~/.local/bin/meet --help

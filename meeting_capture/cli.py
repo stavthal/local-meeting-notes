@@ -7,10 +7,6 @@ from pathlib import Path
 
 import click
 
-from .recorder import list_devices, record_audio
-from .summarizer import summarize as do_summarize
-from .transcriber import transcribe as do_transcribe
-
 DEFAULT_WHISPER = "mlx-community/whisper-large-v3-mlx"
 DEFAULT_LLM = "llama3.1:8b"
 
@@ -41,6 +37,8 @@ def cli() -> None:
 @cli.command()
 def devices() -> None:
     """List audio devices."""
+    from .recorder import list_devices
+
     list_devices()
 
 
@@ -95,13 +93,24 @@ def setup(whisper_model: str, llm_model: str) -> None:
 
 
 @cli.command()
-@click.option("--device", type=int, default=None, help="Input device index (see `devices`).")
+@click.option(
+    "--device",
+    type=int,
+    default=None,
+    help="Skip the prompt with an input device index (see `devices`).",
+)
 @click.option("--output", type=click.Path(path_type=Path), default=None, help="Output WAV path.")
 def record(device: int | None, output: Path | None) -> None:
     """Record from a device until Ctrl+C."""
+    from .recorder import DeviceSelectionError
+    from .recorder import record_audio
+
     if output is None:
         output = _timestamped_wav()
-    record_audio(output, device)
+    try:
+        record_audio(output, device)
+    except DeviceSelectionError as e:
+        raise click.ClickException(str(e)) from e
 
 
 @cli.command()
@@ -109,6 +118,8 @@ def record(device: int | None, output: Path | None) -> None:
 @click.option("--model", default=DEFAULT_WHISPER, show_default=True, help="Whisper model.")
 def transcribe(audio: Path, model: str) -> None:
     """Transcribe an audio file. Saves <audio>.txt."""
+    from .transcriber import transcribe as do_transcribe
+
     txt = audio.with_suffix(".txt")
     do_transcribe(audio, txt, model=model)
 
@@ -118,18 +129,33 @@ def transcribe(audio: Path, model: str) -> None:
 @click.option("--model", default=DEFAULT_LLM, show_default=True, help="Ollama model.")
 def summarize(transcript: Path, model: str) -> None:
     """Summarize a transcript. Saves <transcript>.summary.md."""
+    from .summarizer import summarize as do_summarize
+
     out = transcript.with_suffix(".summary.md")
     do_summarize(transcript, out, model=model)
 
 
 @cli.command(name="all")
-@click.option("--device", type=int, default=None, help="Input device index.")
+@click.option(
+    "--device",
+    type=int,
+    default=None,
+    help="Skip the prompt with an input device index.",
+)
 @click.option("--whisper-model", default=DEFAULT_WHISPER, show_default=True)
 @click.option("--llm-model", default=DEFAULT_LLM, show_default=True)
 def do_all(device: int | None, whisper_model: str, llm_model: str) -> None:
     """Record → transcribe → summarize in one shot."""
+    from .recorder import DeviceSelectionError
+    from .recorder import record_audio
+    from .summarizer import summarize as do_summarize
+    from .transcriber import transcribe as do_transcribe
+
     audio = _timestamped_wav()
-    record_audio(audio, device)
+    try:
+        record_audio(audio, device)
+    except DeviceSelectionError as e:
+        raise click.ClickException(str(e)) from e
 
     txt = audio.with_suffix(".txt")
     do_transcribe(audio, txt, model=whisper_model)

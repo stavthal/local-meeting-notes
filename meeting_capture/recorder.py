@@ -2,12 +2,47 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import queue
 import sys
 from pathlib import Path
+from typing import Callable, Iterable
 
+import numpy as np
 import sounddevice as sd
 import soundfile as sf
+
+DEFAULT_SIGNAL_THRESHOLD = 0.01
+DEFAULT_PROBE_SECONDS = 1.0
+
+
+class DeviceSelectionError(RuntimeError):
+    """Raised when no usable recording input can be selected."""
+
+
+@dataclass(frozen=True)
+class InputDeviceCandidate:
+    index: int
+    name: str
+    max_input_channels: int
+    default_samplerate: float | None
+    priority: int
+
+
+@dataclass(frozen=True)
+class SelectedInputDevice:
+    index: int
+    name: str
+    max_input_channels: int
+    rms: float | None
+    auto_selected: bool
+
+
+@dataclass(frozen=True)
+class InputDeviceProbe:
+    candidate: InputDeviceCandidate
+    rms: float | None
+    error: str | None = None
 
 
 def list_devices() -> None:
@@ -17,8 +52,245 @@ def list_devices() -> None:
     print(f"\nDefault input:  {default_in}")
     print(f"Default output: {default_out}")
     print(
-        "\nTip: pick the *index* of your Aggregate Device (mic + BlackHole) "
-        "and pass it with --device."
+        "\nTip: `meet record` probes active inputs and prompts you to choose. "
+        "Pass --device to skip the prompt."
+    )
+
+
+def _device_priority(name: str) -> int:
+    normalized = name.lower()
+    if "aggregate" in normalized or "meeting capture" in normalized:
+        return 100
+    if "blackhole" in normalized:
+        return 90
+    if "loopback" in normalized or "virtual" in normalized:
+        return 80
+    if "zoom" in normalized or "teams" in normalized:
+        return 70
+    return 0
+
+
+def input_device_candidates(devices: Iterable[dict] | None = None) -> list[InputDeviceCandidate]:
+    """Return input-capable devices with their PortAudio indexes."""
+    if devices is None:
+        devices = sd.query_devices()
+
+    candidates = []
+    for index, device in enumerate(devices):
+        max_input_channels = int(device.get("max_input_channels", 0) or 0)
+        if max_input_channels <= 0:
+            continue
+
+        name = str(device.get("name", f"Device {index}"))
+        candidates.append(
+            InputDeviceCandidate(
+                index=index,
+                name=name,
+                max_input_channels=max_input_channels,
+                default_samplerate=device.get("default_samplerate"),
+                priority=_device_priority(name),
+            )
+        )
+    return candidates
+
+
+def _device_rms(samples: np.ndarray) -> float:
+    """Return the loudest channel RMS for a recorded sample buffer."""
+    if samples.size == 0:
+        return 0.0
+    if samples.ndim == 1:
+        samples = samples.reshape(-1, 1)
+    channel_rms = np.sqrt(np.mean(np.square(samples), axis=0))
+    return float(np.max(channel_rms))
+
+
+def _probe_device_rms(
+    candidate: InputDeviceCandidate,
+    samplerate: int,
+    probe_seconds: float,
+) -> float:
+    frames = max(1, int(samplerate * probe_seconds))
+    samples = sd.rec(
+        frames,
+        samplerate=samplerate,
+        channels=candidate.max_input_channels,
+        device=candidate.index,
+        blocking=True,
+    )
+    return _device_rms(samples)
+
+
+def probe_input_devices(
+    devices: Iterable[dict] | None = None,
+    rms_probe: Callable[[InputDeviceCandidate], float] | None = None,
+    samplerate: int = 16_000,
+    probe_seconds: float = DEFAULT_PROBE_SECONDS,
+) -> list[InputDeviceProbe]:
+    """Record a short sample from every visible input device and return signal levels."""
+    candidates = input_device_candidates(devices)
+    if not candidates:
+        raise DeviceSelectionError("No input devices are visible to PortAudio.")
+
+    if rms_probe is None:
+        rms_probe = lambda candidate: _probe_device_rms(candidate, samplerate, probe_seconds)
+
+    probes = []
+    for candidate in candidates:
+        try:
+            rms = rms_probe(candidate)
+        except Exception as e:  # noqa: BLE001 - bad devices should not block probing others.
+            probes.append(InputDeviceProbe(candidate=candidate, rms=None, error=str(e)))
+            continue
+        probes.append(InputDeviceProbe(candidate=candidate, rms=rms))
+
+    return probes
+
+
+def _recommended_probe(
+    probes: list[InputDeviceProbe],
+    threshold: float,
+) -> InputDeviceProbe:
+    active = [
+        probe
+        for probe in probes
+        if probe.error is None and probe.rms is not None and probe.rms >= threshold
+    ]
+
+    if not active:
+        errors = [
+            f"{probe.candidate.index}: {probe.candidate.name} ({probe.error})"
+            for probe in probes
+            if probe.error
+        ]
+        detail = f" Probe errors: {'; '.join(errors)}" if errors else ""
+        raise DeviceSelectionError(
+            "No input device with audio signal was detected. "
+            "Start or unmute the call, then try again; or pass --device explicitly."
+            f"{detail}"
+        )
+
+    return max(active, key=lambda probe: (probe.candidate.priority, probe.rms or 0.0))
+
+
+def _print_probe_results(
+    probes: list[InputDeviceProbe],
+    recommended: InputDeviceProbe,
+) -> None:
+    print("\nInput probe results:")
+    for probe in probes:
+        marker = "*" if probe.candidate.index == recommended.candidate.index else " "
+        if probe.error:
+            signal = f"error: {probe.error}"
+        else:
+            signal = f"rms {probe.rms:.4f}"
+        print(
+            f"{marker} {probe.candidate.index:>2} — {probe.candidate.name} "
+            f"({probe.candidate.max_input_channels} ch, {signal})"
+        )
+
+
+def _prompt_for_device(
+    probes: list[InputDeviceProbe],
+    recommended: InputDeviceProbe,
+) -> int:
+    available = {probe.candidate.index for probe in probes}
+    if not sys.stdin.isatty():
+        return recommended.candidate.index
+
+    while True:
+        raw = input(f"Choose input device [{recommended.candidate.index}]: ").strip()
+        if raw == "":
+            return recommended.candidate.index
+        try:
+            selected = int(raw)
+        except ValueError:
+            print("Enter one of the listed device indexes.")
+            continue
+        if selected in available:
+            return selected
+        print("Enter one of the listed device indexes.")
+
+
+def choose_input_device(
+    probes: list[InputDeviceProbe],
+    threshold: float = DEFAULT_SIGNAL_THRESHOLD,
+    chooser: Callable[[list[InputDeviceProbe], InputDeviceProbe], int] | None = None,
+) -> SelectedInputDevice:
+    """Choose a device from probe results, using a prompt by default."""
+    recommended = _recommended_probe(probes, threshold)
+    _print_probe_results(probes, recommended)
+
+    if chooser is None:
+        chooser = _prompt_for_device
+
+    selected_index = chooser(probes, recommended)
+    for probe in probes:
+        if probe.candidate.index != selected_index:
+            continue
+        if probe.error:
+            raise DeviceSelectionError(
+                f"Device {selected_index} could not be probed: {probe.error}"
+            )
+        return SelectedInputDevice(
+            index=probe.candidate.index,
+            name=probe.candidate.name,
+            max_input_channels=probe.candidate.max_input_channels,
+            rms=probe.rms,
+            auto_selected=True,
+        )
+
+    raise DeviceSelectionError(f"Device {selected_index} is not one of the probed inputs.")
+
+
+def select_active_input_device(
+    devices: Iterable[dict] | None = None,
+    rms_probe: Callable[[InputDeviceCandidate], float] | None = None,
+    samplerate: int = 16_000,
+    probe_seconds: float = DEFAULT_PROBE_SECONDS,
+    threshold: float = DEFAULT_SIGNAL_THRESHOLD,
+) -> SelectedInputDevice:
+    """Probe inputs and choose the recommended active device without prompting."""
+    probes = probe_input_devices(
+        devices=devices,
+        rms_probe=rms_probe,
+        samplerate=samplerate,
+        probe_seconds=probe_seconds,
+    )
+    recommended = _recommended_probe(probes, threshold)
+    candidate = recommended.candidate
+    return SelectedInputDevice(
+        index=candidate.index,
+        name=candidate.name,
+        max_input_channels=candidate.max_input_channels,
+        rms=recommended.rms,
+        auto_selected=True,
+    )
+
+
+def _resolve_input_device(
+    device: int | None,
+    samplerate: int,
+    probe_seconds: float,
+    threshold: float,
+) -> SelectedInputDevice:
+    if device is None:
+        print(f"Probing input devices for {probe_seconds:.1f}s each...")
+        probes = probe_input_devices(
+            samplerate=samplerate,
+            probe_seconds=probe_seconds,
+        )
+        return choose_input_device(probes, threshold=threshold)
+
+    info = sd.query_devices(device)
+    max_input_channels = int(info.get("max_input_channels", 0) or 0)
+    if max_input_channels <= 0:
+        raise DeviceSelectionError(f"Device {device} has no input channels.")
+    return SelectedInputDevice(
+        index=device,
+        name=str(info["name"]),
+        max_input_channels=max_input_channels,
+        rms=None,
+        auto_selected=False,
     )
 
 
@@ -27,20 +299,33 @@ def record_audio(
     device: int | None = None,
     samplerate: int = 16_000,
     channels: int = 1,
+    probe_seconds: float = DEFAULT_PROBE_SECONDS,
+    signal_threshold: float = DEFAULT_SIGNAL_THRESHOLD,
 ) -> None:
     """Record until Ctrl+C, writing PCM_16 WAV to ``output_path``."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    selected = _resolve_input_device(
+        device=device,
+        samplerate=samplerate,
+        probe_seconds=probe_seconds,
+        threshold=signal_threshold,
+    )
+    stream_channels = selected.max_input_channels if channels == 1 else channels
 
     q: queue.Queue = queue.Queue()
 
     def callback(indata, frames, time_info, status):
         if status:
             print(status, file=sys.stderr)
-        q.put(indata.copy())
+        data = indata.copy()
+        if channels == 1 and data.ndim == 2 and data.shape[1] > 1:
+            data = data.mean(axis=1, keepdims=True)
+        q.put(data)
 
-    dev_label = sd.query_devices(device)["name"] if device is not None else "default"
-    print(f"Recording from '{dev_label}' → {output_path}")
+    if selected.auto_selected:
+        print(f"Selected input: {selected.index} — {selected.name} (rms {selected.rms:.4f})")
+    print(f"Recording from '{selected.name}' → {output_path}")
     print("Press Ctrl+C to stop.\n")
 
     try:
@@ -53,8 +338,8 @@ def record_audio(
         ) as f:
             with sd.InputStream(
                 samplerate=samplerate,
-                device=device,
-                channels=channels,
+                device=selected.index,
+                channels=stream_channels,
                 callback=callback,
             ):
                 while True:

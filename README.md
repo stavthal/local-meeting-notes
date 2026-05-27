@@ -11,7 +11,7 @@ cd ~/Documents/meeting-capture
 
 That script:
 
-1. Installs `blackhole-2ch`, `ollama`, and `pipx` via Homebrew (idempotent).
+1. Installs `blackhole-2ch`, `ollama`, `ffmpeg`, and `pipx` via Homebrew (idempotent).
 2. Starts the Ollama service and pulls `llama3.1:8b`.
 3. Installs this package with `pipx`, so the `meet` command lands on your PATH.
 
@@ -36,10 +36,12 @@ In **System Settings → Sound**, set Output to **Multi-Output Device** while in
 ```bash
 meet --help                  # all commands
 meet devices                 # find your Aggregate Device index
-meet record --device <N>     # record until Ctrl+C
+meet record                  # probe inputs, prompt for a device, record until Ctrl+C
+meet record --device <N>     # skip the prompt with an input device
 meet transcribe <file.wav>   # transcribe an existing recording
 meet summarize <file.txt>    # summarize a transcript
-meet all --device <N>        # do all three end-to-end
+meet all                     # probe, choose, record, transcribe, summarize
+meet all --device <N>        # skip the prompt end-to-end
 ```
 
 Recordings, transcripts, and summaries default to `~/Documents/meeting-capture/recordings/`. Override with the `MEET_DIR` env var.
@@ -47,10 +49,14 @@ Recordings, transcripts, and summaries default to `~/Documents/meeting-capture/r
 ## Stack
 
 - **Audio routing:** BlackHole 2ch (virtual audio driver) + Aggregate Device
-- **Recording:** `sounddevice` → 16 kHz mono WAV
+- **Recording:** `sounddevice` → probe inputs → prompt for device → 16 kHz mono WAV
 - **Transcription:** `mlx-whisper` (uses the Neural Engine + GPU on M-series)
 - **Summarization:** Ollama running `llama3.1:8b`
 - **CLI:** Python + Click, packaged via `hatchling`, installed via `pipx`
+
+## Audio capture roadmap
+
+The current CLI probes active inputs and prompts you to choose a device while still using BlackHole/Aggregate Device routing. Native macOS capture and a product-grade "just record the call" UX are tracked in [docs/audio-capture-roadmap.md](docs/audio-capture-roadmap.md).
 
 ## Tuning
 

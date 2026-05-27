@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-
-import mlx_whisper
+import shutil
 
 
 def _fmt_time(seconds: float) -> str:
@@ -23,6 +22,14 @@ def transcribe(
     """Run Whisper and write a timestamped transcript. Returns the output path."""
     audio_path = Path(audio_path)
     output_path = Path(output_path)
+
+    if shutil.which("ffmpeg") is None:
+        raise SystemExit(
+            "ffmpeg is required for mlx-whisper audio loading. "
+            "Install it with: brew install ffmpeg"
+        )
+
+    import mlx_whisper
 
     print(f"Transcribing {audio_path.name} with {model}...")
     result = mlx_whisper.transcribe(
