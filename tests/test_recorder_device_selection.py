@@ -142,6 +142,25 @@ class RecorderDeviceSelectionTests(unittest.TestCase):
         self.assertEqual([probe.candidate.index for probe in probes], [1, 2, 3])
         self.assertEqual([probe.rms for probe in probes], [0.50, 0.00, 0.08])
 
+    def test_choose_input_device_falls_back_to_highest_priority_when_no_signal(self):
+        # All probes silent — picker should still show with highest-priority
+        # candidate as default rather than raising.
+        probes = probe_input_devices(
+            devices=DEVICES,
+            rms_probe=lambda candidate: 0.0,
+        )
+        captured_default: list[int] = []
+
+        def chooser(_probes, recommended_probe):
+            captured_default.append(recommended_probe.candidate.index)
+            return recommended_probe.candidate.index
+
+        selected = choose_input_device(probes, threshold=0.01, chooser=chooser)
+
+        self.assertEqual(captured_default, [3])  # Aggregate Device — highest priority
+        self.assertEqual(selected.index, 3)
+        self.assertEqual(selected.name, "Meeting Aggregate Device")
+
     def test_choose_input_device_uses_prompted_index(self):
         probes = probe_input_devices(
             devices=DEVICES,

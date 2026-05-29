@@ -197,27 +197,24 @@ def probe_input_devices(
 def _recommended_probe(
     probes: list[InputDeviceProbe],
     threshold: float,
-) -> InputDeviceProbe:
+) -> InputDeviceProbe | None:
+    """Return the best probe with active signal, or None if nothing meets the threshold."""
     active = [
         probe
         for probe in probes
         if probe.error is None and probe.rms is not None and probe.rms >= threshold
     ]
-
     if not active:
-        errors = [
-            f"{probe.candidate.index}: {probe.candidate.name} ({probe.error})"
-            for probe in probes
-            if probe.error
-        ]
-        detail = f" Probe errors: {'; '.join(errors)}" if errors else ""
-        raise DeviceSelectionError(
-            "No input device with audio signal was detected. "
-            "Start or unmute the call, then try again; or pass --device explicitly."
-            f"{detail}"
-        )
-
+        return None
     return max(active, key=lambda probe: (probe.candidate.priority, probe.rms or 0.0))
+
+
+def _fallback_default_probe(probes: list[InputDeviceProbe]) -> InputDeviceProbe | None:
+    """Highest-priority working probe, used when nothing shows signal."""
+    eligible = [p for p in probes if p.error is None]
+    if not eligible:
+        return None
+    return max(eligible, key=lambda probe: (probe.candidate.priority, probe.rms or 0.0))
 
 
 def _print_probe_results(
@@ -322,14 +319,38 @@ def choose_input_device(
     threshold: float = DEFAULT_SIGNAL_THRESHOLD,
     chooser: Callable[[list[InputDeviceProbe], InputDeviceProbe], int] | None = None,
 ) -> SelectedInputDevice:
-    """Choose a device from probe results, using a prompt by default."""
+    """Choose a device from probe results, using a prompt by default.
+
+    Always shows the picker as long as there is at least one working probe.
+    When no probe shows signal above ``threshold``, the highest-priority
+    candidate becomes the default so the user can pick before any audio flows.
+    """
     recommended = _recommended_probe(probes, threshold)
-    _print_probe_results(probes, recommended)
+    default = recommended or _fallback_default_probe(probes)
+
+    if default is None:
+        errors = [
+            f"{probe.candidate.index}: {probe.candidate.name} ({probe.error})"
+            for probe in probes
+            if probe.error
+        ]
+        detail = f" Probe errors: {'; '.join(errors)}" if errors else ""
+        raise DeviceSelectionError(
+            f"No usable input devices to choose from.{detail}"
+        )
+
+    if recommended is None:
+        print(
+            "\n⚠  No input device shows active audio yet. "
+            "Pick one — signal will flow once your call starts or you talk."
+        )
+
+    _print_probe_results(probes, default)
 
     if chooser is None:
         chooser = _prompt_for_device
 
-    selected_index = chooser(probes, recommended)
+    selected_index = chooser(probes, default)
     for probe in probes:
         if probe.candidate.index != selected_index:
             continue
@@ -355,7 +376,11 @@ def select_active_input_device(
     probe_seconds: float = DEFAULT_PROBE_SECONDS,
     threshold: float = DEFAULT_SIGNAL_THRESHOLD,
 ) -> SelectedInputDevice:
-    """Probe inputs and choose the recommended active device without prompting."""
+    """Probe inputs and pick the recommended active device without prompting.
+
+    Strict: raises ``DeviceSelectionError`` when nothing meets the threshold.
+    For an interactive fallback that tolerates silence, use ``choose_input_device``.
+    """
     probes = probe_input_devices(
         devices=devices,
         rms_probe=rms_probe,
@@ -363,6 +388,11 @@ def select_active_input_device(
         probe_seconds=probe_seconds,
     )
     recommended = _recommended_probe(probes, threshold)
+    if recommended is None:
+        raise DeviceSelectionError(
+            "No input device with audio signal was detected. "
+            "Start or unmute the call, then try again; or pass --device explicitly."
+        )
     candidate = recommended.candidate
     return SelectedInputDevice(
         index=candidate.index,
