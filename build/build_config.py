@@ -1,13 +1,17 @@
 """py2app configuration for Meeting Capture.
 
-Invoke via ``./build_dmg.sh`` — that script handles the icon conversion
-and DMG packaging too. Direct usage is:
+Invoke via ``./build/build_dmg.sh`` — that script provisions an isolated
+build venv, generates the .icns icon, runs py2app, and wraps the result in
+a .dmg. Direct usage from the project root:
 
-    python setup_app.py py2app
+    python build/build_config.py py2app
 
 The bundle is a "menu bar" / agent app (no Dock icon) because of
 ``LSUIElement=True``. Microphone permission text is set so the
 TCC prompt is informative on first launch.
+
+Paths in this file are relative to the **project root**, since the build
+script always ``cd``s there before invoking py2app.
 
 Notes on native deps NOT bundled:
 - BlackHole (audio driver) — installed via ``brew install blackhole-2ch``
@@ -20,7 +24,7 @@ at runtime.
 
 from setuptools import setup
 
-APP = ["app_entry.py"]
+APP = ["build/app_entry.py"]
 
 DATA_FILES = [
     (

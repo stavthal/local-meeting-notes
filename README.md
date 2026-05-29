@@ -93,10 +93,12 @@ meet summarize <file.txt>          # summarize an existing transcript
 ## Build a DMG installer
 
 ```bash
-./build_dmg.sh
+./build/build_dmg.sh
 ```
 
-That produces `dist/MeetingCapture-<version>.dmg` — a draggable installer that bundles Python + all Python dependencies into a real `.app`. Native dependencies (BlackHole, Ollama, ffmpeg) still need to be installed via `setup.sh` on the target Mac, because they're system-level.
+That produces `dist/MeetingCapture-<version>.dmg` — a draggable installer that bundles Python + all Python dependencies into a real `.app`. The build runs entirely inside an isolated venv at `build/.venv-build/`, so your system Python is never touched.
+
+See [`build/README.md`](build/README.md) for what the script does step by step. Native dependencies (BlackHole, Ollama, ffmpeg) still need to be installed via `setup.sh` on the target Mac, because they're system-level.
 
 The build is **not codesigned**. First-launch on a fresh Mac requires right-click → Open → Open to get past Gatekeeper. For proper distribution you'd need an Apple Developer account and notarization.
 

@@ -25,6 +25,8 @@ recordings/
 
 # DMG / app bundle build artifacts
 *.dmg
+build_temp/
+build/.venv-build/
 meeting_capture/assets/AppIcon.iconset/
 meeting_capture/assets/AppIcon.icns
 
