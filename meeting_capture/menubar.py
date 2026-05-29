@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .call_detection import CallSignal, detect_active_call
 from .recorder import (
     DeviceSelectionError,
     InputDeviceCandidate,
@@ -31,6 +32,8 @@ from .transcriber import transcribe
 
 CAPTURE_MIC_ONLY = "mic_only"
 CAPTURE_MIC_PLUS_SYSTEM = "mic_plus_system"
+
+CALL_DETECT_INTERVAL_SECONDS = 5
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 ICON_PATH = ASSETS_DIR / "tray_icon.png"
@@ -96,6 +99,13 @@ Meeting Capture — quick guide
    automatically. You'll get a macOS notification when the
    summary is ready (or check "Recent Summaries").
 
+Call detection:
+   The status row shows "Teams call detected" / "Google Meet call
+   detected" / "Zoom call detected" when one of those apps has an
+   active meeting window. This is a HINT, not auto-start — you stay
+   in control of when recording begins (and of getting consent).
+   Toggle via the "Detect active calls" menu item.
+
 Troubleshooting:
    • Only my voice was recorded → macOS Output wasn't set to a
      Multi-Output Device that includes BlackHole. Fix that, retry.
@@ -149,6 +159,11 @@ def _build_app(rumps: Any) -> Any:
                 else CAPTURE_MIC_ONLY
             )
 
+            # Call-detection state.
+            self.detected_call: CallSignal | None = None
+            self.call_detection_enabled = True
+            self._notified_for_call_at_title: str | None = None
+
             # Menu items kept as instance attrs so we can mutate them.
             self.status_item = rumps.MenuItem("🟢 Ready", callback=None)
             self.start_item = rumps.MenuItem("● Start Recording", callback=self.on_start)
@@ -166,6 +181,10 @@ def _build_app(rumps: Any) -> Any:
             self.rescan_item = rumps.MenuItem(
                 "Re-scan devices", callback=self.on_rescan_devices
             )
+            self.call_detect_toggle = rumps.MenuItem(
+                "Detect active calls", callback=self.on_toggle_call_detection
+            )
+            self.call_detect_toggle.state = True
             self.quit_item = rumps.MenuItem("Quit", callback=self.on_quit)
 
             self.menu = [
@@ -182,6 +201,7 @@ def _build_app(rumps: Any) -> Any:
                 None,
                 self.how_to_item,
                 self.rescan_item,
+                self.call_detect_toggle,
                 None,
                 self.quit_item,
             ]
@@ -193,6 +213,9 @@ def _build_app(rumps: Any) -> Any:
 
             # Tick the elapsed timer every second while recording.
             self.elapsed_timer = rumps.Timer(self._on_tick, 1)
+            # Poll for active calls in the background.
+            self.call_timer = rumps.Timer(self._on_call_check, CALL_DETECT_INTERVAL_SECONDS)
+            self.call_timer.start()
 
         # ----- menu construction -------------------------------------------
 
@@ -291,6 +314,11 @@ def _build_app(rumps: Any) -> Any:
             elif self.is_processing:
                 self.status_item.title = "⏳ Transcribing + summarizing…"
                 self.title = "⏳"
+            elif self.detected_call is not None:
+                self.status_item.title = (
+                    f"🟢 Ready — {self.detected_call.app} call detected"
+                )
+                self.title = ""
             else:
                 self.status_item.title = "🟢 Ready"
                 self.title = ""
@@ -366,6 +394,46 @@ def _build_app(rumps: Any) -> Any:
 
         def on_rescan_devices(self, _: Any) -> None:
             self._populate_device_menu()
+
+        def on_toggle_call_detection(self, item: Any) -> None:
+            self.call_detection_enabled = not self.call_detection_enabled
+            item.state = self.call_detection_enabled
+            if self.call_detection_enabled:
+                self.call_timer.start()
+            else:
+                self.call_timer.stop()
+                self.detected_call = None
+                if not self.is_recording and not self.is_processing:
+                    self._refresh_buttons()
+
+        def _on_call_check(self, _: Any) -> None:
+            if not self.call_detection_enabled:
+                return
+            prev = self.detected_call
+            try:
+                self.detected_call = detect_active_call()
+            except Exception:  # noqa: BLE001 - detection must never crash the app
+                self.detected_call = None
+
+            # One-shot notification on first transition into a new call.
+            if self.detected_call and (prev is None or prev.title != self.detected_call.title):
+                if self._notified_for_call_at_title != self.detected_call.title:
+                    self._notified_for_call_at_title = self.detected_call.title
+                    if not self.is_recording and not self.is_processing:
+                        try:
+                            rumps.notification(
+                                title=f"{self.detected_call.app} call detected",
+                                subtitle="Meeting Capture is ready when you are",
+                                message="Click the menu bar icon → Start Recording.",
+                                sound=False,
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+            elif not self.detected_call:
+                self._notified_for_call_at_title = None
+
+            if not self.is_recording and not self.is_processing:
+                self._refresh_buttons()
 
         def on_quit(self, _: Any) -> None:
             if self.is_recording and self.stop_event is not None:

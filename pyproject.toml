@@ -25,6 +25,7 @@ dependencies = [
     "click>=8.1",
     "questionary>=2.0",
     "rumps>=0.4.0 ; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=9.0 ; sys_platform == 'darwin'",
 ]
 
 [project.scripts]
