@@ -33,10 +33,24 @@ In **System Settings → Sound**, set Output to **Multi-Output Device** while in
 
 ## Use
 
+### Menu bar app (recommended)
+
+```bash
+meet menubar
+```
+
+Adds a microphone icon to your menu bar. Pick a device from the **Device** submenu (or leave it on **Auto-pick**), click **Start Recording**, click **Stop Recording** when the meeting ends. You get a macOS notification when the summary is ready, and an **Open last summary** item in the menu.
+
+The menu also has **How to use…** which opens a quick in-app guide, and **Recent Summaries** for browsing past meetings.
+
+To keep it running after you close the terminal, launch via `nohup meet menubar &` or wrap it into a LaunchAgent.
+
+### CLI
+
 ```bash
 meet --help                  # all commands
-meet devices                 # find your Aggregate Device index
-meet record                  # probe inputs, prompt for a device, record until Ctrl+C
+meet devices                 # raw device list (Aggregate Device index, etc.)
+meet record                  # probe inputs, arrow-key picker, record until Ctrl+C
 meet record --device <N>     # skip the prompt with an input device
 meet transcribe <file.wav>   # transcribe an existing recording
 meet summarize <file.txt>    # summarize a transcript

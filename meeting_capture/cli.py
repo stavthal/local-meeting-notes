@@ -43,6 +43,14 @@ def devices() -> None:
 
 
 @cli.command()
+def menubar() -> None:
+    """Launch the macOS menu bar app (rumps)."""
+    from .menubar import run
+
+    run()
+
+
+@cli.command()
 @click.option("--whisper-model", default=DEFAULT_WHISPER, show_default=True)
 @click.option("--llm-model", default=DEFAULT_LLM, show_default=True)
 def setup(whisper_model: str, llm_model: str) -> None:

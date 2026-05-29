@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import queue
 import sys
+import threading
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -437,8 +438,17 @@ def record_audio(
     channels: int = 1,
     probe_seconds: float = DEFAULT_PROBE_SECONDS,
     signal_threshold: float = DEFAULT_SIGNAL_THRESHOLD,
-) -> None:
-    """Record until Ctrl+C, writing PCM_16 WAV to ``output_path``."""
+    stop_event: threading.Event | None = None,
+    quiet: bool = False,
+) -> Path:
+    """Record until Ctrl+C (or ``stop_event`` is set), writing PCM_16 WAV.
+
+    The optional ``stop_event`` lets non-CLI callers (e.g. the menu bar app)
+    stop recording cleanly from another thread. ``quiet`` suppresses print
+    output, useful when the caller renders its own UI.
+
+    Returns the output path on success.
+    """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     selected = _resolve_input_device(
@@ -452,17 +462,19 @@ def record_audio(
     q: queue.Queue = queue.Queue()
 
     def callback(indata, frames, time_info, status):
-        if status:
+        if status and not quiet:
             print(status, file=sys.stderr)
         data = indata.copy()
         if channels == 1 and data.ndim == 2 and data.shape[1] > 1:
             data = data.mean(axis=1, keepdims=True)
         q.put(data)
 
-    if selected.auto_selected:
-        print(f"Selected input: {selected.index} — {selected.name} (rms {selected.rms:.4f})")
-    print(f"Recording from '{selected.name}' → {output_path}")
-    print("Press Ctrl+C to stop.\n")
+    if not quiet:
+        if selected.auto_selected:
+            print(f"Selected input: {selected.index} — {selected.name} (rms {selected.rms:.4f})")
+        print(f"Recording from '{selected.name}' → {output_path}")
+        if stop_event is None:
+            print("Press Ctrl+C to stop.\n")
 
     try:
         with sf.SoundFile(
@@ -479,6 +491,21 @@ def record_audio(
                 callback=callback,
             ):
                 while True:
-                    f.write(q.get())
+                    if stop_event is not None and stop_event.is_set():
+                        # Drain any remaining buffered audio before closing.
+                        while True:
+                            try:
+                                f.write(q.get_nowait())
+                            except queue.Empty:
+                                break
+                        break
+                    try:
+                        f.write(q.get(timeout=0.1))
+                    except queue.Empty:
+                        continue
     except KeyboardInterrupt:
+        pass
+
+    if not quiet:
         print(f"\nStopped. Saved: {output_path}")
+    return output_path

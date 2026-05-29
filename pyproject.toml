@@ -24,6 +24,7 @@ dependencies = [
     "requests>=2.31",
     "click>=8.1",
     "questionary>=2.0",
+    "rumps>=0.4.0 ; sys_platform == 'darwin'",
 ]
 
 [project.scripts]
@@ -31,3 +32,6 @@ meet = "meeting_capture.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["meeting_capture"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"meeting_capture/assets" = "meeting_capture/assets"
