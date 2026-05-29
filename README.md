@@ -4,6 +4,8 @@ Local, private, free meeting notes for macOS. Records your calls, transcribes th
 
 Built for Apple Silicon (M-series). Lives in your menu bar.
 
+**📖 Full documentation**: https://stavthal.github.io/local-meeting-notes/
+
 ## What it does
 
 - One click in the menu bar to start recording any meeting (Teams, Google Meet, Zoom, anything else).
