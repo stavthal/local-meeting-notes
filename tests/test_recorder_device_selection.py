@@ -4,6 +4,7 @@ from meeting_capture.recorder import (
     _device_priority,
     _should_exclude_device,
     choose_input_device,
+    find_blackhole_device,
     input_device_candidates,
     probe_input_devices,
     select_active_input_device,
@@ -55,6 +56,24 @@ class RecorderDeviceSelectionTests(unittest.TestCase):
         self.assertFalse(_should_exclude_device("AirPods Pro"))
         self.assertFalse(_should_exclude_device("BlackHole 2ch"))
         self.assertFalse(_should_exclude_device("MacBook Pro Microphone"))
+
+    def test_find_blackhole_device_returns_candidate_when_present(self):
+        devices = [
+            {"name": "MacBook Pro Microphone", "max_input_channels": 1},
+            {"name": "BlackHole 2ch", "max_input_channels": 2},
+            {"name": "Stavros's AirPods", "max_input_channels": 1},
+        ]
+        result = find_blackhole_device(devices)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.name, "BlackHole 2ch")
+        self.assertEqual(result.index, 1)
+
+    def test_find_blackhole_device_returns_none_when_missing(self):
+        devices = [
+            {"name": "MacBook Pro Microphone", "max_input_channels": 1},
+            {"name": "Stavros's AirPods", "max_input_channels": 1},
+        ]
+        self.assertIsNone(find_blackhole_device(devices))
 
     def test_should_exclude_device_matches_webcam_inputs(self):
         # External USB webcam mics — typically low quality, never the right

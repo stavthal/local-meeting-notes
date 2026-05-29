@@ -108,15 +108,22 @@ def setup(whisper_model: str, llm_model: str) -> None:
     help="Skip the prompt with an input device index (see `devices`).",
 )
 @click.option("--output", type=click.Path(path_type=Path), default=None, help="Output WAV path.")
-def record(device: int | None, output: Path | None) -> None:
+@click.option(
+    "--include-system-audio/--mic-only",
+    default=False,
+    help="Mix mic + system audio (BlackHole). Default: mic only.",
+)
+def record(device: int | None, output: Path | None, include_system_audio: bool) -> None:
     """Record from a device until Ctrl+C."""
-    from .recorder import DeviceSelectionError
-    from .recorder import record_audio
+    from .recorder import DeviceSelectionError, record_audio, record_audio_mixed
 
     if output is None:
         output = _timestamped_wav()
     try:
-        record_audio(output, device)
+        if include_system_audio:
+            record_audio_mixed(output, mic_device=device)
+        else:
+            record_audio(output, device)
     except DeviceSelectionError as e:
         raise click.ClickException(str(e)) from e
 
@@ -152,16 +159,28 @@ def summarize(transcript: Path, model: str) -> None:
 )
 @click.option("--whisper-model", default=DEFAULT_WHISPER, show_default=True)
 @click.option("--llm-model", default=DEFAULT_LLM, show_default=True)
-def do_all(device: int | None, whisper_model: str, llm_model: str) -> None:
+@click.option(
+    "--include-system-audio/--mic-only",
+    default=False,
+    help="Mix mic + system audio (BlackHole). Default: mic only.",
+)
+def do_all(
+    device: int | None,
+    whisper_model: str,
+    llm_model: str,
+    include_system_audio: bool,
+) -> None:
     """Record → transcribe → summarize in one shot."""
-    from .recorder import DeviceSelectionError
-    from .recorder import record_audio
+    from .recorder import DeviceSelectionError, record_audio, record_audio_mixed
     from .summarizer import summarize as do_summarize
     from .transcriber import transcribe as do_transcribe
 
     audio = _timestamped_wav()
     try:
-        record_audio(audio, device)
+        if include_system_audio:
+            record_audio_mixed(audio, mic_device=device)
+        else:
+            record_audio(audio, device)
     except DeviceSelectionError as e:
         raise click.ClickException(str(e)) from e
 

@@ -9,6 +9,9 @@ import threading
 from pathlib import Path
 from typing import Callable, Iterable
 
+import shutil
+import subprocess
+
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
@@ -110,6 +113,21 @@ def _device_priority(name: str) -> int:
         return 30
 
     return 10
+
+
+def find_blackhole_device(
+    devices: Iterable[dict] | None = None,
+) -> InputDeviceCandidate | None:
+    """Return the BlackHole loopback as a candidate, or None if not installed.
+
+    The menu bar app uses this to decide whether dual-stream capture is
+    possible: if BlackHole exists, we can mix the user's mic with system
+    audio without needing a manually created Aggregate Device.
+    """
+    for candidate in input_device_candidates(devices):
+        if "blackhole" in candidate.name.lower():
+            return candidate
+    return None
 
 
 def input_device_candidates(devices: Iterable[dict] | None = None) -> list[InputDeviceCandidate]:
@@ -505,6 +523,177 @@ def record_audio(
                         continue
     except KeyboardInterrupt:
         pass
+
+    if not quiet:
+        print(f"\nStopped. Saved: {output_path}")
+    return output_path
+
+
+def _stream_to_wav(
+    device_index: int,
+    output_path: Path,
+    samplerate: int,
+    stream_channels: int,
+    file_channels: int,
+    stop_event: threading.Event,
+    error_box: list,
+) -> None:
+    """Worker target: stream a single input device to a PCM_16 WAV until stop_event."""
+    q: queue.Queue = queue.Queue()
+
+    def callback(indata, frames, time_info, status):  # noqa: ARG001
+        data = indata.copy()
+        if file_channels == 1 and data.ndim == 2 and data.shape[1] > 1:
+            data = data.mean(axis=1, keepdims=True)
+        q.put(data)
+
+    try:
+        with sf.SoundFile(
+            str(output_path),
+            mode="x",
+            samplerate=samplerate,
+            channels=file_channels,
+            subtype="PCM_16",
+        ) as f:
+            with sd.InputStream(
+                samplerate=samplerate,
+                device=device_index,
+                channels=stream_channels,
+                callback=callback,
+            ):
+                while not stop_event.is_set():
+                    try:
+                        f.write(q.get(timeout=0.1))
+                    except queue.Empty:
+                        continue
+                # Drain.
+                while True:
+                    try:
+                        f.write(q.get_nowait())
+                    except queue.Empty:
+                        break
+    except Exception as e:  # noqa: BLE001 - surface to parent thread
+        error_box.append(e)
+
+
+def record_audio_mixed(
+    output_path: Path,
+    mic_device: int | None = None,
+    system_device: int | None = None,
+    samplerate: int = 16_000,
+    stop_event: threading.Event | None = None,
+    quiet: bool = False,
+    probe_seconds: float = DEFAULT_PROBE_SECONDS,
+    signal_threshold: float = DEFAULT_SIGNAL_THRESHOLD,
+) -> Path:
+    """Record mic and system audio in parallel, mix to a single WAV via ffmpeg.
+
+    Two ``sd.InputStream`` workers run in their own threads, each writing to a
+    temporary WAV next to ``output_path``. When ``stop_event`` is set (or
+    Ctrl+C is sent), both streams stop and ffmpeg's ``amix`` filter combines
+    them. Temp files are removed on success.
+
+    This is the path you want when you don't have an Aggregate Device set up:
+    just BlackHole installed + macOS Output routed to a Multi-Output Device
+    that includes BlackHole.
+    """
+    if shutil.which("ffmpeg") is None:
+        raise SystemExit(
+            "ffmpeg is required to mix mic + system audio. brew install ffmpeg"
+        )
+
+    if system_device is None:
+        bh = find_blackhole_device()
+        if bh is None:
+            raise DeviceSelectionError(
+                "BlackHole is not installed or not visible to PortAudio. "
+                "Install with: brew install blackhole-2ch (then reboot Audio MIDI Setup)."
+            )
+        system_device = bh.index
+
+    mic_selected = _resolve_input_device(
+        device=mic_device,
+        samplerate=samplerate,
+        probe_seconds=probe_seconds,
+        threshold=signal_threshold,
+    )
+    sys_info = sd.query_devices(system_device)
+    sys_channels = int(sys_info.get("max_input_channels", 0) or 0)
+    if sys_channels <= 0:
+        raise DeviceSelectionError(
+            f"System device {system_device} has no input channels."
+        )
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    mic_path = output_path.with_name(output_path.stem + ".mic.wav")
+    sys_path = output_path.with_name(output_path.stem + ".system.wav")
+
+    if not quiet:
+        print(f"Recording mic '{mic_selected.name}' + system '{sys_info['name']}'")
+        print(f"  → mixing to {output_path}")
+        if stop_event is None:
+            print("Press Ctrl+C to stop.\n")
+
+    local_stop = stop_event or threading.Event()
+    errors: list = []
+
+    mic_thread = threading.Thread(
+        target=_stream_to_wav,
+        args=(
+            mic_selected.index,
+            mic_path,
+            samplerate,
+            mic_selected.max_input_channels,
+            1,
+            local_stop,
+            errors,
+        ),
+        daemon=True,
+    )
+    sys_thread = threading.Thread(
+        target=_stream_to_wav,
+        args=(system_device, sys_path, samplerate, sys_channels, 1, local_stop, errors),
+        daemon=True,
+    )
+
+    mic_thread.start()
+    sys_thread.start()
+
+    try:
+        while mic_thread.is_alive() or sys_thread.is_alive():
+            mic_thread.join(timeout=0.2)
+            sys_thread.join(timeout=0.2)
+    except KeyboardInterrupt:
+        local_stop.set()
+        mic_thread.join()
+        sys_thread.join()
+
+    if errors:
+        for p in (mic_path, sys_path):
+            p.unlink(missing_ok=True)
+        raise RuntimeError(f"Recording failed: {errors[0]}")
+
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel", "error",
+                "-i", str(mic_path),
+                "-i", str(sys_path),
+                "-filter_complex", "amix=inputs=2:duration=longest:normalize=0",
+                "-ar", str(samplerate),
+                "-ac", "1",
+                "-c:a", "pcm_s16le",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        mic_path.unlink(missing_ok=True)
+        sys_path.unlink(missing_ok=True)
 
     if not quiet:
         print(f"\nStopped. Saved: {output_path}")
