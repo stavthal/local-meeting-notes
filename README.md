@@ -1,37 +1,47 @@
-# Meeting Capture (Local, Apple Silicon)
+# Meeting Capture
 
-Record mic + system audio, transcribe with **MLX Whisper**, summarize with **Ollama**. 100% local, free, installable as a proper command-line app.
+Local, private, free meeting notes for macOS. Records your calls, transcribes them with Whisper, summarizes them with a local LLM. No cloud, no subscription, no data leaves your machine.
 
-## Install
+Built for Apple Silicon (M-series). Lives in your menu bar.
+
+## What it does
+
+- One click in the menu bar to start recording any meeting (Teams, Google Meet, Zoom, anything else).
+- Captures **both sides** of the call — your mic plus the other party's audio via BlackHole — and mixes them with ffmpeg.
+- Transcribes locally with MLX Whisper, taking full advantage of the Neural Engine.
+- Summarizes locally with Ollama (Llama 3.1 8B by default), producing structured markdown: TL;DR, decisions, action items, open questions.
+- Detects active Teams / Meet / Zoom calls and shows it in the status row so you don't forget to hit record.
+- Smart device picker: filters out Continuity iPhones, webcam mics, and other irrelevant inputs. Prefers AirPods, headsets, Aggregate Devices.
+
+## Why
+
+Every meeting-notes tool is one of:
+- A cloud SaaS that uploads your meetings to someone else's servers.
+- A bot that joins your calls and needs explicit consent management.
+- A paid Mac app.
+
+This is none of those. Audio capture, transcription, and summarization all happen on your laptop. The only thing that ever touches the network is HuggingFace (for the one-time Whisper model download) and Ollama's local server on 127.0.0.1.
+
+## Requirements
+
+- macOS 13+
+- Apple Silicon (M1 or newer) — MLX Whisper requires it
+- ~8 GB free disk space for models
+- Homebrew
+
+## Quick start
 
 ```bash
-cd ~/Documents/meeting-capture
+git clone <this-repo>
+cd meeting-capture
 ./setup.sh
 ```
 
-That script:
+That script installs BlackHole, Ollama, ffmpeg, and pipx via Homebrew, starts the Ollama service, pulls `llama3.1:8b`, downloads the Whisper model, and installs the `meet` CLI on your PATH. Idempotent — safe to re-run.
 
-1. Installs `blackhole-2ch`, `ollama`, `ffmpeg`, and `pipx` via Homebrew (idempotent).
-2. Starts the Ollama service and pulls `llama3.1:8b`.
-3. Installs this package with `pipx`, so the `meet` command lands on your PATH.
+One manual step is still required: setting up your audio routing in **Audio MIDI Setup**. The script prints exact instructions at the end.
 
-If `pipx` was newly installed, you may need to open a new terminal so the PATH update takes effect.
-
-## One manual step: audio routing
-
-Open **Audio MIDI Setup** (⌘-Space → "Audio MIDI Setup"):
-
-**Multi-Output Device** (so you still HEAR the meeting):
-- Click `+` → Create Multi-Output Device
-- Check: your speakers/headphones **+** BlackHole 2ch
-
-**Aggregate Device** (this is what you record FROM):
-- Click `+` → Create Aggregate Device
-- Check: your mic **+** BlackHole 2ch
-
-In **System Settings → Sound**, set Output to **Multi-Output Device** while in a meeting.
-
-## Use
+## Usage
 
 ### Menu bar app (recommended)
 
@@ -39,38 +49,92 @@ In **System Settings → Sound**, set Output to **Multi-Output Device** while in
 meet menubar
 ```
 
-Adds a microphone icon to your menu bar. Pick a device from the **Device** submenu (or leave it on **Auto-pick**), click **Start Recording**, click **Stop Recording** when the meeting ends. You get a macOS notification when the summary is ready, and an **Open last summary** item in the menu.
+A microphone icon appears in your menu bar:
 
-The menu also has **How to use…** which opens a quick in-app guide, and **Recent Summaries** for browsing past meetings.
+```
+🎙
+─────────────────────────
+🟢 Ready — Google Meet call detected
+─────────────────────────
+● Start Recording
+■ Stop Recording
+Capture mode          ▸
+   Mic only
+ ✓ Mic + system audio (via BlackHole)
+Mic device            ▸
+   ✓ Auto-pick
+   ...
+─────────────────────────
+Recent Summaries      ▸
+Open last summary
+Open recordings folder
+─────────────────────────
+How to use…
+Detect active calls   ✓
+─────────────────────────
+Quit
+```
 
-To keep it running after you close the terminal, launch via `nohup meet menubar &` or wrap it into a LaunchAgent.
+Click **Start Recording** at the start of a meeting. Click **Stop Recording** at the end. You'll get a macOS notification when the summary is ready.
 
 ### CLI
 
 ```bash
-meet --help                  # all commands
-meet devices                 # raw device list (Aggregate Device index, etc.)
-meet record                  # probe inputs, arrow-key picker, record until Ctrl+C
-meet record --device <N>     # skip the prompt with an input device
-meet transcribe <file.wav>   # transcribe an existing recording
-meet summarize <file.txt>    # summarize a transcript
-meet all                     # probe, choose, record, transcribe, summarize
-meet all --device <N>        # skip the prompt end-to-end
+meet --help                        # all commands
+meet devices                       # list audio devices
+meet record                        # arrow-key picker, record until Ctrl+C
+meet record --include-system-audio # mix mic + BlackHole
+meet record --device <N>           # skip the picker
+meet all                           # record → transcribe → summarize
+meet transcribe <file.wav>         # transcribe an existing recording
+meet summarize <file.txt>          # summarize an existing transcript
 ```
 
-Recordings, transcripts, and summaries default to `~/Documents/meeting-capture/recordings/`. Override with the `MEET_DIR` env var.
+## Build a DMG installer
 
-## Stack
+```bash
+./build_dmg.sh
+```
 
-- **Audio routing:** BlackHole 2ch (virtual audio driver) + Aggregate Device
-- **Recording:** `sounddevice` → probe inputs → prompt for device → 16 kHz mono WAV
-- **Transcription:** `mlx-whisper` (uses the Neural Engine + GPU on M-series)
-- **Summarization:** Ollama running `llama3.1:8b`
-- **CLI:** Python + Click, packaged via `hatchling`, installed via `pipx`
+That produces `dist/MeetingCapture-<version>.dmg` — a draggable installer that bundles Python + all Python dependencies into a real `.app`. Native dependencies (BlackHole, Ollama, ffmpeg) still need to be installed via `setup.sh` on the target Mac, because they're system-level.
 
-## Audio capture roadmap
+The build is **not codesigned**. First-launch on a fresh Mac requires right-click → Open → Open to get past Gatekeeper. For proper distribution you'd need an Apple Developer account and notarization.
 
-The current CLI probes active inputs and prompts you to choose a device while still using BlackHole/Aggregate Device routing. Native macOS capture and a product-grade "just record the call" UX are tracked in [docs/audio-capture-roadmap.md](docs/audio-capture-roadmap.md).
+## Architecture
+
+```
+Teams / Meet / Zoom ─► macOS Output ─┬─► Speakers (you hear)
+                                     └─► BlackHole ──┐
+                                                     ├─► ffmpeg amix ─► WAV
+Your mic ────────────────────────────────────────────┘                  │
+                                                                        ▼
+                                                              mlx-whisper (local)
+                                                                        │
+                                                                        ▼
+                                                                  transcript.txt
+                                                                        │
+                                                                        ▼
+                                                                Ollama + Llama 3.1
+                                                                        │
+                                                                        ▼
+                                                                   summary.md
+```
+
+Two parallel `sounddevice` InputStreams write to temp WAVs. When you stop, ffmpeg's `amix` filter combines them into a single mono WAV at 16 kHz. That WAV goes through MLX Whisper for transcription, then the resulting timestamped text is piped to a local Ollama server for structured summarization.
+
+### Stack
+
+| Component | Library |
+|-----------|---------|
+| Audio routing | BlackHole 2ch (virtual audio driver) |
+| Recording | `sounddevice` (PortAudio bindings) |
+| Mixing | `ffmpeg` (amix filter) |
+| Transcription | `mlx-whisper` — fastest Whisper on Apple Silicon |
+| Summarization | Ollama running `llama3.1:8b` (configurable) |
+| Menu bar | `rumps` (PyObjC AppKit wrapper) |
+| Call detection | `pyobjc-framework-Quartz` (CGWindowListCopyWindowInfo) |
+| CLI | `click` + `questionary` for the arrow-key picker |
+| Bundling | `py2app` + `create-dmg` |
 
 ## Tuning
 
@@ -85,50 +149,48 @@ meet summarize foo.txt --model qwen2.5:14b
 meet transcribe foo.wav --model mlx-community/whisper-small-mlx
 ```
 
-## Build a DMG (real Mac installer)
+Recordings, transcripts, and summaries default to `~/Documents/meeting-capture/recordings/`. Override with the `MEET_DIR` environment variable.
 
-If you want a proper double-click installer instead of running via `pipx`:
+## Roadmap
 
-```bash
-./build_dmg.sh
+See [docs/audio-capture-roadmap.md](docs/audio-capture-roadmap.md) for the north-star direction (native macOS ScreenCaptureKit capture, killing BlackHole as a dependency).
+
+Other open items:
+
+- Speaker diarization (hybrid mlx-whisper + pyannote — preserves MLX speed)
+- Codesigning + notarization for clean Gatekeeper UX
+- Per-meeting-type summary templates (1:1 vs standup vs sales call)
+- Auto-cleanup of old recordings
+
+## Privacy
+
+- All audio stays on disk in `~/Documents/meeting-capture/recordings/`. Nothing is uploaded.
+- The first-run Whisper model download fetches from HuggingFace (~3 GB). After that, no network traffic.
+- Ollama runs entirely on `localhost:11434`.
+- Recording consent is your responsibility. The app provides the recording mechanism; you provide the legal/ethical justification.
+
+## Contributing
+
+Issues and PRs welcome. The code is structured around four small modules:
+
+```
+meeting_capture/
+├── recorder.py        # audio capture + device selection
+├── transcriber.py     # Whisper wrapper
+├── summarizer.py      # Ollama wrapper
+├── menubar.py         # rumps menu bar app
+├── call_detection.py  # Quartz window enumeration
+└── cli.py             # Click entrypoints
 ```
 
-That script does the whole pipeline on your Mac:
-
-1. Generates `AppIcon.icns` from the source PNG via `sips` + `iconutil`.
-2. Runs `py2app` to bundle Python + the package + all Python deps into `dist/Meeting Capture.app`.
-3. Wraps the `.app` in `dist/MeetingCapture-<version>.dmg` via `create-dmg` (installed via Homebrew if missing).
-
-The DMG is the thing you'd share. Drag the app into Applications, launch it like any other menu bar app.
-
-**Gatekeeper caveat.** The build is **not codesigned**, so the first launch shows "Meeting Capture cannot be opened because it is from an unidentified developer." Workaround: right-click the app → Open → Open. macOS remembers that for future launches.
-
-**Native deps still required.** BlackHole, Ollama, and ffmpeg can't be bundled into the `.app` (they're system-level). On a fresh Mac, run `./setup.sh` first, or:
+Tests live in `tests/`. Run them with:
 
 ```bash
-brew install blackhole-2ch ollama ffmpeg
-brew services start ollama
-ollama pull llama3.1:8b
+python3 -m unittest discover -s tests
 ```
 
-For real distribution (no Gatekeeper warning), you'd need an Apple Developer account, a Developer ID Application certificate, codesigning, and notarization via `notarytool`. Not in scope here.
+The audio-using tests need PortAudio installed and will be skipped in CI.
 
-## Update
+## License
 
-```bash
-cd ~/Documents/meeting-capture
-pipx install --force .
-```
-
-## Uninstall
-
-```bash
-pipx uninstall meeting-capture
-brew uninstall blackhole-2ch ollama   # optional
-```
-
-## Notes
-
-- First Whisper run downloads the model (~3 GB for large-v3) into `~/.cache/huggingface`. Cached afterward.
-- Consent capture is your responsibility. Confirm before each recording.
-- Speaker diarization ("who said what") is deliberately not in v1 — adds ~50% runtime and a heavy dep tree (pyannote). Swap `transcriber.py` for WhisperX later if you want it.
+MIT. See [LICENSE](LICENSE).
