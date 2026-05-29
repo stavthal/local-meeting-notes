@@ -6,7 +6,7 @@
 meet menubar
 ```
 
-A microphone icon appears in your menu bar. Click it to see the menu:
+The app detaches into the background and returns your terminal immediately. Logs go to `~/Library/Logs/MeetingCapture/menubar.log`. A microphone icon appears in your menu bar. Click it to see the menu:
 
 ```
 🎙
@@ -35,6 +35,12 @@ Re-scan devices
 ✓ Detect active calls
 ─────────────────────────
 Quit
+```
+
+Quit the app from its menu bar icon when you're done. If you want to debug a crash, run in the foreground instead:
+
+```bash
+meet menubar --foreground
 ```
 
 ### Per-meeting flow

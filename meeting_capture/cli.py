@@ -43,11 +43,65 @@ def devices() -> None:
 
 
 @cli.command()
-def menubar() -> None:
-    """Launch the macOS menu bar app (rumps)."""
-    from .menubar import run
+@click.option(
+    "--foreground/--background",
+    default=False,
+    help="Run in the foreground (blocks the terminal). Default detaches.",
+)
+def menubar(foreground: bool) -> None:
+    """Launch the macOS menu bar app (rumps).
 
-    run()
+    By default the process detaches and returns control to your terminal
+    immediately. Logs go to ``~/Library/Logs/MeetingCapture/menubar.log``.
+    Quit the app from the menu bar icon when you're done.
+
+    Pass ``--foreground`` to keep the process attached — useful when you
+    want to see crashes or debug output directly.
+    """
+    if foreground:
+        from .menubar import run
+
+        run()
+        return
+
+    _spawn_menubar_detached()
+
+
+def _spawn_menubar_detached() -> None:
+    """Re-launch ourselves in the background, write logs to a file, and exit."""
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    log_dir = Path.home() / "Library" / "Logs" / "MeetingCapture"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "menubar.log"
+
+    # Prefer the pipx-installed `meet` entry on PATH. Fall back to `sys.argv[0]`
+    # (the invoking entry point) and finally to running the package as a module.
+    meet_binary = shutil.which("meet") or sys.argv[0]
+    if meet_binary and Path(meet_binary).is_file() and os.access(meet_binary, os.X_OK):
+        argv = [meet_binary, "menubar", "--foreground"]
+    else:
+        argv = [sys.executable, "-m", "meeting_capture.cli", "menubar", "--foreground"]
+
+    # Append-mode log + start_new_session detaches from the parent shell so the
+    # process survives the terminal closing.
+    with open(log_file, "a") as f:
+        f.write(f"\n--- Meeting Capture started at {datetime.now().isoformat()} ---\n")
+        subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
+
+    click.echo("Meeting Capture launched in the background.")
+    click.echo(f"Logs: {log_file}")
+    click.echo("Quit it from the 🎙 menu bar icon when you're done.")
 
 
 @cli.command()
