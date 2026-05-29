@@ -9,7 +9,8 @@ description = "Local meeting recorder + Whisper transcription + Ollama summariza
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Steve" }]
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["meeting", "whisper", "ollama", "transcription", "mlx", "apple-silicon"]
 classifiers = [
     "Environment :: Console",

@@ -52,6 +52,19 @@ class MenubarLazyImportTests(unittest.TestCase):
         # Status row should advertise "Ready" in the idle state.
         self.assertIn("Ready", app.status_item.title)
 
+    def test_safe_clear_tolerates_uninitialized_submenu(self):
+        # rumps MenuItem._menu is None until the first add(). Calling clear()
+        # on it raises AttributeError. _safe_clear must swallow that so
+        # _populate_* helpers can be called from __init__.
+        from meeting_capture import menubar
+
+        class BareMenuItem:
+            def clear(self):
+                raise AttributeError("'NoneType' object has no attribute 'removeAllItems'")
+
+        # Should not raise.
+        menubar._safe_clear(BareMenuItem())
+
 
 def _make_fake_rumps():
     """Build a stand-in rumps module exposing just the surface menubar.py uses."""

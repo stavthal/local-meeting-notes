@@ -35,6 +35,19 @@ CAPTURE_MIC_PLUS_SYSTEM = "mic_plus_system"
 
 CALL_DETECT_INTERVAL_SECONDS = 5
 
+
+def _safe_clear(menu_item: Any) -> None:
+    """Clear a rumps MenuItem submenu, tolerating an uninitialized _menu.
+
+    rumps lazily creates the underlying AppKit NSMenu on the first ``add()``,
+    so calling ``clear()`` on a brand-new MenuItem raises
+    ``AttributeError: 'NoneType' object has no attribute 'removeAllItems'``.
+    """
+    try:
+        menu_item.clear()
+    except AttributeError:
+        pass
+
 ASSETS_DIR = Path(__file__).parent / "assets"
 ICON_PATH = ASSETS_DIR / "tray_icon.png"
 
@@ -220,7 +233,7 @@ def _build_app(rumps: Any) -> Any:
         # ----- menu construction -------------------------------------------
 
         def _populate_device_menu(self) -> None:
-            self.device_menu.clear()
+            _safe_clear(self.device_menu)
             auto_item = rumps.MenuItem(
                 "Auto-pick (probe and choose best)",
                 callback=self._make_device_setter(None),
@@ -255,7 +268,7 @@ def _build_app(rumps: Any) -> Any:
             return setter
 
         def _populate_capture_menu(self) -> None:
-            self.capture_menu.clear()
+            _safe_clear(self.capture_menu)
             blackhole = find_blackhole_device()
             mix_label = "Mic + system audio (via BlackHole)"
             if blackhole is None:
@@ -287,7 +300,7 @@ def _build_app(rumps: Any) -> Any:
             return setter
 
         def _populate_recent_menu(self) -> None:
-            self.recent_menu.clear()
+            _safe_clear(self.recent_menu)
             recents = _recent_summaries()
             if not recents:
                 self.recent_menu.add(rumps.MenuItem("(none yet)", callback=None))

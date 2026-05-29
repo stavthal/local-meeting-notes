@@ -45,7 +45,19 @@ fi
 
 if ! python3 -c "import py2app" 2>/dev/null; then
     say "Installing py2app + build deps into the current Python"
-    python3 -m pip install --upgrade py2app setuptools wheel --break-system-packages
+    # py2app 0.28 calls dist.fetch_build_eggs(), removed in setuptools 81+.
+    # Pin below 81 until py2app catches up.
+    python3 -m pip install --upgrade py2app 'setuptools<81' wheel --break-system-packages
+else
+    # Even if py2app is already installed, the current setuptools may be too
+    # new. Downgrade if needed so the build doesn't fail with
+    # 'install_requires is no longer supported'.
+    SETUPTOOLS_VER="$(python3 -c 'import setuptools; print(setuptools.__version__)' 2>/dev/null || echo "0")"
+    SETUPTOOLS_MAJOR="${SETUPTOOLS_VER%%.*}"
+    if [[ "$SETUPTOOLS_MAJOR" =~ ^[0-9]+$ ]] && [[ "$SETUPTOOLS_MAJOR" -ge 81 ]]; then
+        say "Downgrading setuptools to <81 for py2app compatibility (was $SETUPTOOLS_VER)"
+        python3 -m pip install --upgrade 'setuptools<81' --break-system-packages
+    fi
 fi
 
 # --- 2. Build the .icns ------------------------------------------------------
