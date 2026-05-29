@@ -51,6 +51,28 @@ def menubar() -> None:
 
 
 @cli.command()
+def doctor() -> None:
+    """Print a dependency diagnostic report.
+
+    Useful when the menu bar's wizard says something is missing but you
+    *know* it's installed — this shows exactly what was checked and where.
+    """
+    from .dependencies import check_all, format_diagnostic_report
+
+    statuses = check_all()
+    click.echo(format_diagnostic_report(statuses))
+
+    missing = [s for s in statuses if not s.installed]
+    if missing:
+        click.echo("")
+        click.echo("To install what's missing:")
+        from .dependencies import combined_install_command
+
+        click.echo(f"  {combined_install_command(statuses)}")
+        raise SystemExit(1)
+
+
+@cli.command()
 @click.option("--whisper-model", default=DEFAULT_WHISPER, show_default=True)
 @click.option("--llm-model", default=DEFAULT_LLM, show_default=True)
 def setup(whisper_model: str, llm_model: str) -> None:

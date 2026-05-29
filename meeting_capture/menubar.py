@@ -447,22 +447,31 @@ def _build_app(rumps: Any) -> Any:
                 return
 
             if not missing and force:
-                rumps.alert(
-                    title="Dependencies",
-                    message="All dependencies are installed:\n\n"
-                    + "\n".join(f"✓ {s.name}" for s in statuses),
-                )
+                lines = ["All dependencies are installed:", ""]
+                for s in statuses:
+                    lines.append(f"✓ {s.name}")
+                    if s.detail:
+                        lines.append(f"   {s.detail}")
+                rumps.alert(title="Dependencies", message="\n".join(lines))
                 return
 
             install_command = combined_install_command(statuses)
-            missing_block = "\n".join(
-                f"• {s.name} — {s.description}" for s in missing
-            )
+            # Build a detailed block so the user can see EXACTLY what we found
+            # (or didn't find). This makes false negatives debuggable instead
+            # of mysterious.
+            missing_lines = []
+            for s in missing:
+                missing_lines.append(f"• {s.name} — {s.description}")
+                if s.detail:
+                    missing_lines.append(f"     ({s.detail})")
+            missing_block = "\n".join(missing_lines)
 
             message = (
                 f"Meeting Capture needs the following installed:\n\n"
                 f"{missing_block}\n\n"
                 f"Run this in Terminal:\n\n{install_command}\n\n"
+                f"If you've already installed these, run `meet doctor` in your "
+                f"terminal to see what was actually checked.\n\n"
                 f"Click 'Copy install command' to copy it to your clipboard, "
                 f"then paste it in Terminal."
             )

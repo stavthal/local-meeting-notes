@@ -17,12 +17,36 @@ class DependencyCheckTests(unittest.TestCase):
         self.assertTrue(status.installed)
         self.assertEqual(status.name, "ffmpeg")
         self.assertEqual(status.install_command, "brew install ffmpeg")
+        self.assertIn("/usr/local/bin/ffmpeg", status.detail)
 
     def test_ffmpeg_missing_when_not_on_path(self):
-        with patch("shutil.which", return_value=None):
+        with patch("shutil.which", return_value=None), \
+             patch("os.access", return_value=False), \
+             patch("pathlib.Path.is_file", return_value=False):
             status = dependencies._check_ffmpeg()
         self.assertFalse(status.installed)
         self.assertIn("brew install ffmpeg", status.install_command)
+
+    def test_ffmpeg_found_via_homebrew_fallback_when_path_empty(self):
+        # Simulate the PATH-stripped launch context: shutil.which fails
+        # but ffmpeg sits at /opt/homebrew/bin/ffmpeg.
+        from pathlib import Path
+
+        real_is_file = Path.is_file
+        real_access = __import__("os").access
+
+        def fake_is_file(self):
+            return str(self) == "/opt/homebrew/bin/ffmpeg"
+
+        def fake_access(path, mode):
+            return str(path) == "/opt/homebrew/bin/ffmpeg"
+
+        with patch("shutil.which", return_value=None), \
+             patch.object(Path, "is_file", fake_is_file), \
+             patch("os.access", fake_access):
+            status = dependencies._check_ffmpeg()
+        self.assertTrue(status.installed)
+        self.assertIn("/opt/homebrew/bin/ffmpeg", status.detail)
 
     # --- Ollama --------------------------------------------------------------
 
