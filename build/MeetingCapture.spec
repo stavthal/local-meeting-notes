@@ -3,8 +3,8 @@
 # Invoke via ./build/build_dmg.sh, which runs:
 #   pyinstaller build/MeetingCapture.spec --noconfirm --clean
 #
-# All paths are relative to the project root, because the build script
-# always cd's there before invoking pyinstaller.
+# PyInstaller resolves paths in this file relative to the spec file's
+# directory (SPECPATH = build/), so everything is reached via '../'.
 
 # -*- mode: python ; coding: utf-8 -*-
 
@@ -17,11 +17,11 @@ VERSION = "0.1.0"
 block_cipher = None
 
 a = Analysis(
-    ["build/app_entry.py"],
-    pathex=["."],
+    ["app_entry.py"],
+    pathex=[".."],
     binaries=[],
     datas=[
-        ("meeting_capture/assets", "meeting_capture/assets"),
+        ("../meeting_capture/assets", "meeting_capture/assets"),
     ],
     hiddenimports=[
         # Modules that PyInstaller's static analysis can miss because they
@@ -91,7 +91,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name=f"{APP_NAME}.app",
-    icon="meeting_capture/assets/AppIcon.icns",
+    icon="../meeting_capture/assets/AppIcon.icns",
     bundle_identifier=BUNDLE_ID,
     version=VERSION,
     info_plist={
