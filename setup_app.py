@@ -84,5 +84,9 @@ setup(
     app=APP,
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},
-    setup_requires=["py2app"],
+    # NOTE: deliberately no setup_requires=['py2app'] here.
+    # py2app is installed by build_dmg.sh before this script runs.
+    # Listing it in setup_requires triggers setuptools.fetch_build_eggs,
+    # which setuptools 80+ no longer supports and crashes the build with
+    # 'error: install_requires is no longer supported'.
 )
