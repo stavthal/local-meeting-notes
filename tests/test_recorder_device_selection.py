@@ -2,6 +2,7 @@ import unittest
 
 from meeting_capture.recorder import (
     _device_priority,
+    _should_exclude_device,
     choose_input_device,
     input_device_candidates,
     probe_input_devices,
@@ -31,6 +32,50 @@ class RecorderDeviceSelectionTests(unittest.TestCase):
         self.assertGreater(
             _device_priority("BlackHole 2ch"),
             _device_priority("MacBook Pro Microphone"),
+        )
+
+    def test_input_device_candidates_skip_continuity_and_camera_inputs(self):
+        devices = [
+            {"name": "MacBook Pro Microphone", "max_input_channels": 1},
+            {"name": "Steve's iPhone Microphone", "max_input_channels": 1},
+            {"name": "iPad Microphone", "max_input_channels": 1},
+            {"name": "FaceTime HD Camera (Built-in)", "max_input_channels": 1},
+            {"name": "BlackHole 2ch", "max_input_channels": 2},
+        ]
+
+        names = [c.name for c in input_device_candidates(devices)]
+
+        self.assertEqual(names, ["MacBook Pro Microphone", "BlackHole 2ch"])
+
+    def test_should_exclude_device_matches_continuity_and_camera_names(self):
+        self.assertTrue(_should_exclude_device("Steve's iPhone Microphone"))
+        self.assertTrue(_should_exclude_device("iPad Microphone"))
+        self.assertTrue(_should_exclude_device("Apple Watch Microphone"))
+        self.assertTrue(_should_exclude_device("FaceTime HD Camera"))
+        self.assertFalse(_should_exclude_device("AirPods Pro"))
+        self.assertFalse(_should_exclude_device("BlackHole 2ch"))
+        self.assertFalse(_should_exclude_device("MacBook Pro Microphone"))
+
+    def test_device_priority_prefers_personal_headsets_over_builtin_mic(self):
+        # AirPods, headsets, etc. should rank above the MacBook built-in mic
+        # so probing picks them when both have signal.
+        self.assertGreater(
+            _device_priority("AirPods Pro"),
+            _device_priority("MacBook Pro Microphone"),
+        )
+        self.assertGreater(
+            _device_priority("Jabra Evolve 75 Headset"),
+            _device_priority("MacBook Pro Microphone"),
+        )
+        # But virtual/aggregate devices still outrank personal mics — capturing
+        # both sides of the call beats capturing only the user's voice.
+        self.assertGreater(
+            _device_priority("Meeting Aggregate Device"),
+            _device_priority("AirPods Pro"),
+        )
+        self.assertGreater(
+            _device_priority("BlackHole 2ch"),
+            _device_priority("AirPods Pro"),
         )
 
     def test_select_active_input_prefers_call_capture_device_with_signal(self):

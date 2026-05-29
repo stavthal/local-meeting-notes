@@ -15,6 +15,17 @@ import soundfile as sf
 DEFAULT_SIGNAL_THRESHOLD = 0.01
 DEFAULT_PROBE_SECONDS = 1.0
 
+# Input devices to skip entirely. These appear via macOS Continuity or as
+# camera-mounted mics and are never the right capture source for a meeting.
+EXCLUDED_DEVICE_PATTERNS = (
+    "iphone",
+    "ipad",
+    "apple watch",
+    "continuity",
+    "facetime hd camera",
+    "facetime camera",
+)
+
 
 class DeviceSelectionError(RuntimeError):
     """Raised when no usable recording input can be selected."""
@@ -57,8 +68,24 @@ def list_devices() -> None:
     )
 
 
-def _device_priority(name: str) -> int:
+def _should_exclude_device(name: str) -> bool:
+    """True if a device should never be considered for meeting capture."""
     normalized = name.lower()
+    return any(pattern in normalized for pattern in EXCLUDED_DEVICE_PATTERNS)
+
+
+def _device_priority(name: str) -> int:
+    """Score input devices by how likely they are to capture the meeting.
+
+    Tier 1 (100):  aggregate / meeting capture device — both sides of the call.
+    Tier 2 (80-90): system-audio loopbacks (BlackHole, generic virtual / loopback).
+    Tier 3 (70):   meeting-app virtual devices (Zoom, Teams).
+    Tier 4 (50-60): personal headset / earbuds — captures the user's voice cleanly.
+    Tier 5 (30):   MacBook built-in microphone.
+    Tier 6 (10):   anything else with input channels.
+    """
+    normalized = name.lower()
+
     if "aggregate" in normalized or "meeting capture" in normalized:
         return 100
     if "blackhole" in normalized:
@@ -67,11 +94,24 @@ def _device_priority(name: str) -> int:
         return 80
     if "zoom" in normalized or "teams" in normalized:
         return 70
-    return 0
+
+    if any(p in normalized for p in ("airpods", "beats", "bose", "sony", "jabra", "sennheiser")):
+        return 60
+    if "headset" in normalized or "headphone" in normalized or "earbud" in normalized:
+        return 55
+
+    if "macbook" in normalized and ("microphone" in normalized or "mic" in normalized):
+        return 30
+
+    return 10
 
 
 def input_device_candidates(devices: Iterable[dict] | None = None) -> list[InputDeviceCandidate]:
-    """Return input-capable devices with their PortAudio indexes."""
+    """Return input-capable devices with their PortAudio indexes.
+
+    Devices matching EXCLUDED_DEVICE_PATTERNS (iPhone via Continuity, camera mics, etc.)
+    are skipped entirely — they are never probed or shown to the user.
+    """
     if devices is None:
         devices = sd.query_devices()
 
@@ -82,6 +122,9 @@ def input_device_candidates(devices: Iterable[dict] | None = None) -> list[Input
             continue
 
         name = str(device.get("name", f"Device {index}"))
+        if _should_exclude_device(name):
+            continue
+
         candidates.append(
             InputDeviceCandidate(
                 index=index,
