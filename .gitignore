@@ -3,9 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
-build/
 dist/
 .eggs/
+# NOTE: do NOT ignore a generic 'build/' — we use that directory for
+# the PyInstaller spec, app_entry, and the build script (all tracked).
+# Specific build artifacts (.venv-build/, build_temp/, .icns) are
+# listed individually under "DMG / app bundle build artifacts" below.
 
 # Virtual environments
 .venv/

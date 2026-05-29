@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end build: source → .app → .dmg.
-# macOS only. Run from the project root or directly via ./build/build_dmg.sh.
+# macOS only. Run from anywhere via ./build/build_dmg.sh.
 #
-# Creates an isolated venv at build/.venv-build/ so the build never touches
-# your system Python or pipx environments.
+# Uses pyinstaller (not py2app — py2app 0.28 is broken on modern setuptools).
+# All build tooling lives in an isolated venv at build/.venv-build/.
 #
 # Outputs:
 #   dist/Meeting Capture.app
@@ -31,6 +31,7 @@ ASSETS="meeting_capture/assets"
 SRC_ICON="${ASSETS}/app_icon_source.png"
 ICONSET="${ASSETS}/AppIcon.iconset"
 ICNS="${ASSETS}/AppIcon.icns"
+SPEC="build/MeetingCapture.spec"
 
 # --- 1. macOS native tooling -------------------------------------------------
 command -v iconutil >/dev/null || fail "iconutil not found (ships with macOS)."
@@ -43,24 +44,17 @@ if ! command -v create-dmg >/dev/null; then
 fi
 
 # --- 2. Pick the build Python ------------------------------------------------
-# py2app 0.28 predates Python 3.14 and can be flaky on it. Prefer 3.13/3.12/3.11
-# if available; otherwise fall back to whatever python3 resolves to and warn.
+# pyinstaller supports Python 3.8+; any reasonable Python works.
 PYTHON=""
-for cmd in python3.13 python3.12 python3.11; do
+for cmd in python3.13 python3.12 python3.11 python3.14 python3; do
     if command -v "$cmd" >/dev/null 2>&1; then
         PYTHON="$cmd"
         break
     fi
 done
-if [[ -z "$PYTHON" ]]; then
-    PYTHON="python3"
-    PYVER="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-    say "No python3.11–3.13 found, using $PYTHON ($PYVER)."
-    say "If py2app errors out, install Python 3.13 with: brew install python@3.13"
-else
-    PYVER="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-    ok "Build Python: $PYTHON ($PYVER)"
-fi
+[[ -n "$PYTHON" ]] || fail "No python3 on PATH."
+PYVER="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+ok "Build Python: $PYTHON ($PYVER)"
 
 # --- 3. Build venv -----------------------------------------------------------
 VENV="$HERE/.venv-build"
@@ -75,11 +69,9 @@ else
 fi
 
 say "Installing build dependencies into the venv (first run is slow — mlx-whisper etc.)"
-"$VPIP" install --upgrade pip wheel --quiet
-# setuptools<81: py2app 0.28 still calls fetch_build_eggs, which was removed
-# in setuptools 81. The pin is scoped to this venv only.
-"$VPIP" install --upgrade 'setuptools<81' py2app --quiet
-# Editable install of the package + its runtime deps so py2app can introspect them.
+"$VPIP" install --upgrade pip wheel setuptools --quiet
+"$VPIP" install --upgrade pyinstaller pyinstaller-hooks-contrib --quiet
+# Editable install of the package + its runtime deps so pyinstaller can find them.
 "$VPIP" install -e . --quiet
 ok "Venv ready"
 
@@ -123,15 +115,19 @@ iconutil -c icns "$ICONSET" -o "$ICNS"
 rm -rf "$ICONSET"
 ok "Wrote $ICNS"
 
-# --- 6. py2app build ---------------------------------------------------------
+# --- 6. pyinstaller build ----------------------------------------------------
 say "Cleaning previous build artifacts"
-rm -rf build_temp dist
+rm -rf dist build_temp
 
-say "Running py2app (this takes a few minutes the first time)"
-"$VPY" build/build_config.py py2app --no-strip --bdist-base build_temp
+say "Running pyinstaller (this takes a few minutes the first time)"
+"$VPY" -m PyInstaller "$SPEC" \
+    --noconfirm \
+    --clean \
+    --workpath build_temp \
+    --distpath dist
 
 APP_PATH="dist/${APP_NAME}.app"
-[[ -d "$APP_PATH" ]] || fail "py2app did not produce $APP_PATH. Check stderr above."
+[[ -d "$APP_PATH" ]] || fail "pyinstaller did not produce $APP_PATH. Check stderr above."
 ok "Built $APP_PATH"
 
 # --- 7. DMG ------------------------------------------------------------------
@@ -153,7 +149,7 @@ create-dmg \
 
 ok "DMG ready: dist/$DMG_NAME"
 
-# Clean up py2app's temp build dir.
+# Clean up pyinstaller's temp build dir.
 rm -rf build_temp
 
 cat <<EOF
