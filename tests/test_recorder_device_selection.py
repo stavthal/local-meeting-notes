@@ -56,6 +56,17 @@ class RecorderDeviceSelectionTests(unittest.TestCase):
         self.assertFalse(_should_exclude_device("BlackHole 2ch"))
         self.assertFalse(_should_exclude_device("MacBook Pro Microphone"))
 
+    def test_should_exclude_device_matches_webcam_inputs(self):
+        # External USB webcam mics — typically low quality, never the right
+        # source for meeting capture. The Creative Cam Sync was in Steve's
+        # real device list and was being probed unnecessarily.
+        self.assertTrue(_should_exclude_device("Creative Live! Cam Sync 1080p V2 Audio"))
+        self.assertTrue(_should_exclude_device("Logitech BRIO Webcam"))
+        self.assertTrue(_should_exclude_device("OBS Virtual Camera"))
+        # Real personal mics shouldn't get caught by the webcam patterns.
+        self.assertFalse(_should_exclude_device("Stavros's AirPods"))
+        self.assertFalse(_should_exclude_device("Shure MV7"))
+
     def test_device_priority_prefers_personal_headsets_over_builtin_mic(self):
         # AirPods, headsets, etc. should rank above the MacBook built-in mic
         # so probing picks them when both have signal.

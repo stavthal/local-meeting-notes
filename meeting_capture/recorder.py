@@ -18,12 +18,17 @@ DEFAULT_PROBE_SECONDS = 1.0
 # Input devices to skip entirely. These appear via macOS Continuity or as
 # camera-mounted mics and are never the right capture source for a meeting.
 EXCLUDED_DEVICE_PATTERNS = (
+    # macOS Continuity devices
     "iphone",
     "ipad",
     "apple watch",
     "continuity",
-    "facetime hd camera",
-    "facetime camera",
+    # built-in camera mics
+    "facetime",
+    # external webcam mics — typically low quality, never the right call source
+    "webcam",
+    "cam sync",
+    "obs virtual",
 )
 
 
@@ -232,14 +237,58 @@ def _print_probe_results(
         )
 
 
-def _prompt_for_device(
+def _format_probe_label(probe: InputDeviceProbe) -> str:
+    if probe.error:
+        signal = f"error: {probe.error}"
+    else:
+        signal = f"rms {probe.rms:.4f}"
+    return (
+        f"{probe.candidate.index:>2} — {probe.candidate.name} "
+        f"({probe.candidate.max_input_channels} ch, {signal})"
+    )
+
+
+def _arrow_key_picker(
     probes: list[InputDeviceProbe],
     recommended: InputDeviceProbe,
 ) -> int:
-    available = {probe.candidate.index for probe in probes}
-    if not sys.stdin.isatty():
-        return recommended.candidate.index
+    """Interactive arrow-key/Enter picker. Raises ImportError if questionary is missing."""
+    import questionary
 
+    choices = []
+    default_choice = None
+    for probe in probes:
+        label = _format_probe_label(probe)
+        if probe.candidate.index == recommended.candidate.index:
+            label = f"{label}  ← recommended"
+        choice = questionary.Choice(
+            title=label,
+            value=probe.candidate.index,
+            disabled="probe failed" if probe.error else False,
+        )
+        choices.append(choice)
+        if probe.candidate.index == recommended.candidate.index and not probe.error:
+            default_choice = choice
+
+    answer = questionary.select(
+        "Choose input device:",
+        choices=choices,
+        default=default_choice,
+        instruction="(↑/↓ to move, Enter to confirm)",
+    ).ask()
+
+    if answer is None:
+        # User pressed Ctrl+C / ESC inside the picker.
+        raise DeviceSelectionError("Device selection cancelled.")
+    return int(answer)
+
+
+def _number_prompt(
+    probes: list[InputDeviceProbe],
+    recommended: InputDeviceProbe,
+) -> int:
+    """Fallback prompt when questionary is not installed."""
+    available = {probe.candidate.index for probe in probes}
     while True:
         raw = input(f"Choose input device [{recommended.candidate.index}]: ").strip()
         if raw == "":
@@ -252,6 +301,20 @@ def _prompt_for_device(
         if selected in available:
             return selected
         print("Enter one of the listed device indexes.")
+
+
+def _prompt_for_device(
+    probes: list[InputDeviceProbe],
+    recommended: InputDeviceProbe,
+) -> int:
+    if not sys.stdin.isatty():
+        return recommended.candidate.index
+
+    try:
+        return _arrow_key_picker(probes, recommended)
+    except ImportError:
+        # questionary not installed — degrade gracefully to the typed prompt.
+        return _number_prompt(probes, recommended)
 
 
 def choose_input_device(
