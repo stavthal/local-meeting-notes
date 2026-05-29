@@ -85,6 +85,34 @@ meet summarize foo.txt --model qwen2.5:14b
 meet transcribe foo.wav --model mlx-community/whisper-small-mlx
 ```
 
+## Build a DMG (real Mac installer)
+
+If you want a proper double-click installer instead of running via `pipx`:
+
+```bash
+./build_dmg.sh
+```
+
+That script does the whole pipeline on your Mac:
+
+1. Generates `AppIcon.icns` from the source PNG via `sips` + `iconutil`.
+2. Runs `py2app` to bundle Python + the package + all Python deps into `dist/Meeting Capture.app`.
+3. Wraps the `.app` in `dist/MeetingCapture-<version>.dmg` via `create-dmg` (installed via Homebrew if missing).
+
+The DMG is the thing you'd share. Drag the app into Applications, launch it like any other menu bar app.
+
+**Gatekeeper caveat.** The build is **not codesigned**, so the first launch shows "Meeting Capture cannot be opened because it is from an unidentified developer." Workaround: right-click the app → Open → Open. macOS remembers that for future launches.
+
+**Native deps still required.** BlackHole, Ollama, and ffmpeg can't be bundled into the `.app` (they're system-level). On a fresh Mac, run `./setup.sh` first, or:
+
+```bash
+brew install blackhole-2ch ollama ffmpeg
+brew services start ollama
+ollama pull llama3.1:8b
+```
+
+For real distribution (no Gatekeeper warning), you'd need an Apple Developer account, a Developer ID Application certificate, codesigning, and notarization via `notarytool`. Not in scope here.
+
 ## Update
 
 ```bash

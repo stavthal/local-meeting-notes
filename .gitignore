@@ -23,6 +23,11 @@ recordings/
 # macOS
 .DS_Store
 
+# DMG / app bundle build artifacts
+*.dmg
+meeting_capture/assets/AppIcon.iconset/
+meeting_capture/assets/AppIcon.icns
+
 # IDEs
 .idea/
 .vscode/
