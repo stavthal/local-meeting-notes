@@ -19,6 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from .call_detection import CallSignal, detect_active_call
+from .dependencies import (
+    DependencyStatus,
+    check_all as check_all_dependencies,
+    combined_install_command,
+    missing_dependencies,
+)
 from .recorder import (
     DeviceSelectionError,
     InputDeviceCandidate,
@@ -194,6 +200,9 @@ def _build_app(rumps: Any) -> Any:
             self.rescan_item = rumps.MenuItem(
                 "Re-scan devices", callback=self.on_rescan_devices
             )
+            self.deps_item = rumps.MenuItem(
+                "Install missing dependencies…", callback=self.on_show_dep_wizard
+            )
             self.call_detect_toggle = rumps.MenuItem(
                 "Detect active calls", callback=self.on_toggle_call_detection
             )
@@ -213,6 +222,7 @@ def _build_app(rumps: Any) -> Any:
                 self.open_folder_item,
                 None,
                 self.how_to_item,
+                self.deps_item,
                 self.rescan_item,
                 self.call_detect_toggle,
                 None,
@@ -223,6 +233,11 @@ def _build_app(rumps: Any) -> Any:
             self._populate_device_menu()
             self._populate_recent_menu()
             self._refresh_buttons()
+
+            # First-launch: nudge the user if anything's missing, but do it
+            # *after* the menu is constructed so the alert doesn't race with
+            # AppKit's menu initialization.
+            self._maybe_show_dep_wizard(on_launch=True)
 
             # Tick the elapsed timer every second while recording.
             self.elapsed_timer = rumps.Timer(self._on_tick, 1)
@@ -407,6 +422,71 @@ def _build_app(rumps: Any) -> Any:
 
         def on_rescan_devices(self, _: Any) -> None:
             self._populate_device_menu()
+            # Capture mode depends on whether BlackHole is visible — refresh
+            # it too so newly-installed BlackHole becomes selectable without
+            # restarting the app.
+            self._populate_capture_menu()
+            # And, if a new BlackHole means we now have all deps, drop the
+            # wizard nudge.
+            self._maybe_show_dep_wizard(on_launch=False)
+
+        def on_show_dep_wizard(self, _: Any) -> None:
+            self._maybe_show_dep_wizard(on_launch=False, force=True)
+
+        def _maybe_show_dep_wizard(self, on_launch: bool, force: bool = False) -> None:
+            """Show the dependency wizard if anything is missing.
+
+            ``on_launch=True`` keeps the dialog suppressed when everything is
+            already installed; ``force=True`` always opens it (used by the
+            menu item) so the user can review status on demand.
+            """
+            statuses = check_all_dependencies()
+            missing = missing_dependencies(statuses)
+
+            if not missing and not force:
+                return
+
+            if not missing and force:
+                rumps.alert(
+                    title="Dependencies",
+                    message="All dependencies are installed:\n\n"
+                    + "\n".join(f"✓ {s.name}" for s in statuses),
+                )
+                return
+
+            install_command = combined_install_command(statuses)
+            missing_block = "\n".join(
+                f"• {s.name} — {s.description}" for s in missing
+            )
+
+            message = (
+                f"Meeting Capture needs the following installed:\n\n"
+                f"{missing_block}\n\n"
+                f"Run this in Terminal:\n\n{install_command}\n\n"
+                f"Click 'Copy install command' to copy it to your clipboard, "
+                f"then paste it in Terminal."
+            )
+
+            title = "Set up Meeting Capture" if on_launch else "Missing dependencies"
+            clicked_ok = rumps.alert(
+                title=title,
+                message=message,
+                ok="Copy install command",
+                cancel="Skip",
+            )
+
+            if clicked_ok == 1:
+                try:
+                    subprocess.run(["pbcopy"], input=install_command, text=True, check=False)
+                    rumps.notification(
+                        title="Install command copied",
+                        subtitle="Paste in Terminal and run",
+                        message=install_command,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                # Open Terminal so the user has somewhere to paste.
+                subprocess.run(["open", "-a", "Terminal"], check=False)
 
         def on_toggle_call_detection(self, item: Any) -> None:
             self.call_detection_enabled = not self.call_detection_enabled
